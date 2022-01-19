@@ -51,8 +51,11 @@ def midi_test():
 		print('Device opened for testing. Use ctrl-c to quit.')
 		while True:
 			while m.poll():
-				print(m.read(1))
-			time.sleep(0.1)
+				raw = m.read(1)
+				key = tuple(raw[0][0][0:2])
+				if key[0] != 248:
+					print(raw)
+			time.sleep(0.01)
 	except:
 		m.close()
 		
@@ -65,9 +68,11 @@ def read_conf(conf_file):
 			if len(l.strip()) == 0 or l[0] == '#':
 				continue
 			fs = l.split()
+			print(fs)
 			key = (int(fs[0]), int(fs[1]))
 			if fs[0] == '144':
-				val = (int(fs[2]), int(fs[3]))
+				val = (int(fs[2]), int(fs[3]), int(fs[4]))
+				#print(val)
 			else:
 				val = (int(fs[2]), fs[3])
 			table[key] = val
@@ -130,34 +135,54 @@ def joystick_run():
 	try:
 		if options.verbose:
 			print('Ready. Use ctrl-c to quit.')
+		#Initialise history
+		previous_key = None
+		previous_vjoy_device = None
 		while True:
 			while midi.poll():
 				ipt = midi.read(1)
 				#print(ipt)
 				key = tuple(ipt[0][0][0:2])
 				reading = ipt[0][0][2]
+				# Filter out 248 clock messages.
+				if key[0] != 248:
+					print(key, reading)
 				# Check that the input is defined in table
-				print(key, reading)
 				if not key in table:
+					# If key isn't in table, it may be cancelling a previous key.
+					# Ignore clock messages and check read value.
+					if key[0] != 248 and reading == 0 and previous_key and previous_vjoy_device:
+						vjoy.SetBtn(reading, previous_key, int(previous_vjoy_device))
+						print("Zeroing previous key press")
+					elif key[0] != 248:
+						print("Key not specified in conf file")
 					continue
 				opt = table[key]
+				#print(opt)
 				if options.verbose:
 					print(key, '->', opt, reading)
-				if key[0] == 176:
-					# A slider input
-					# Check that the output axis is valid
+				if key[0]:
+					# An input
+					# Check if it is configured as an axis or a button
 					# Note: We did not check if that axis is defined in vJoy
 					if not opt[1] in axis:
-						continue
-					reading = (reading + 1) << 8
-					vjoy.SetAxis(reading, opt[0], axis[opt[1]])
-				elif key[0] == 144:
-					# A button input
-					vjoy.SetBtn(reading, opt[0], int(opt[1]))
-				elif key[0] == 128:
-					# A button off input
-					vjoy.SetBtn(reading, opt[0], int(opt[1]))
-			time.sleep(0.1)
+						# A button input
+						vjoy.SetBtn(reading, opt[0], int(opt[1]))
+						print('Button value sent')
+						if opt[2] == 1:
+							reading = 0
+							time.sleep(0.01)
+							vjoy.SetBtn(reading, opt[0], int(opt[1]))
+							print("Zeroing key press, no expected noteoff input")
+						previous_key = opt[0]
+						previous_vjoy_device = opt[1]
+					elif opt[1] in axis:
+						# An Axis Input
+						reading = (reading + 1) << 8
+						vjoy.SetAxis(reading, opt[0], axis[opt[1]])
+						print('Axis value sent')
+				print(opt)
+			time.sleep(0.01)
 	except:
 		#traceback.print_exc()
 		pass
